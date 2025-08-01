@@ -13,7 +13,7 @@ class NoteApp:
         self.default_font = font.Font(family="Courier New", size=self.default_font_size)
 
         self.root = root
-        self.root.title("Zettelkasten v1.5.1")
+        self.root.title("Zettelkasten v1.5.2")
         self.notes = {}
         self.current_note = None
         self.image_refs = []
@@ -139,6 +139,17 @@ class NoteApp:
             self.title_var.set(title)
             self.text_area.config(state=tk.NORMAL)
             self.text_area.delete(1.0, tk.END)
+
+            # Sort the listbox
+            titles = list(self.notes.keys())
+            self.note_listbox.delete(0, tk.END)
+            for t in natsorted(titles):
+                self.note_listbox.insert(tk.END, t)
+            
+            # Select the new note
+            idx = self.note_listbox.get(0, tk.END).index(title)
+            self.note_listbox.selection_set(idx)
+            self.note_listbox.see(idx)
 
 
     def delete_note(self, event=None):
