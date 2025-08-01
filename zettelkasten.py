@@ -5,6 +5,7 @@ from tkinter import filedialog, messagebox, simpledialog, font, PhotoImage
 from PIL import Image, ImageTk, ImageGrab
 from natsort import natsorted
 import uuid
+import webbrowser
 
 class NoteApp:
     def __init__(self, root):
@@ -13,7 +14,7 @@ class NoteApp:
         self.default_font = font.Font(family="Courier New", size=self.default_font_size)
 
         self.root = root
-        self.root.title("Zettelkasten v1.5.2")
+        self.root.title("Zettelkasten v1.6")
         self.notes = {}
         self.current_note = None
         self.image_refs = []
@@ -78,6 +79,20 @@ class NoteApp:
         underline_font = self.default_font.copy()
         underline_font.configure(underline=True)
         self.text_area.tag_configure("underline", font=underline_font)
+
+        link_font = self.default_font.copy()
+        link_font.configure(underline=True)
+        self.text_area.tag_configure("link", font=link_font, foreground="blue")
+        self.text_area.tag_bind("link", "<Enter>", lambda e: self.text_area.config(cursor="hand2"))
+        self.text_area.tag_bind("link", "<Leave>", lambda e: self.text_area.config(cursor=""))
+        self.text_area.tag_bind("link", "<Button-1>", self.open_link)
+
+        note_link_font = self.default_font.copy()
+        note_link_font.configure(underline=True)
+        self.text_area.tag_configure("note_link", font=note_link_font, foreground="green")
+        self.text_area.tag_bind("note_link", "<Enter>", lambda e: self.text_area.config(cursor="hand2"))
+        self.text_area.tag_bind("note_link", "<Leave>", lambda e: self.text_area.config(cursor=""))
+        self.text_area.tag_bind("note_link", "<Button-1>", self.open_note_by_title)
 
         search_frame = tk.Frame(self.right_frame)
         search_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
@@ -353,6 +368,25 @@ class NoteApp:
                     self.insert_with_preview(content)
                     self.text_area.config(state=tk.DISABLED)
 
+    def open_note_by_title(self, event):
+        tag_names = self.text_area.tag_names(tk.CURRENT)
+        for tag in tag_names:
+            if tag.startswith("note_link-"):
+                title = tag[10:]
+                try:
+                    idx = self.note_listbox.get(0, tk.END).index(title)
+                    self.note_listbox.selection_clear(0, tk.END)
+                    self.note_listbox.selection_set(idx)
+                    self.load_note(None)
+                except ValueError:
+                    messagebox.showinfo("Note not found", f"Note '{title}' not found.")
+
+    def open_link(self, event):
+        tag_names = self.text_area.tag_names(tk.CURRENT)
+        for tag in tag_names:
+            if tag.startswith("link-"):
+                webbrowser.open_new(tag[5:])
+
     def insert_with_preview(self, content):
         self.text_area.delete(1.0, tk.END)
         self.image_refs.clear()
@@ -372,7 +406,7 @@ class NoteApp:
 
             # Images
 
-            elif stripped.startswith("![") and stripped.endswith("]"):
+            elif stripped.startswith("![ ") and stripped.endswith("]"):
                 filename = stripped[2:-1]
                 path = os.path.join(self.image_dir, filename)
                 print('Preview', path)
@@ -406,6 +440,33 @@ class NoteApp:
             else:
                 i = 0
                 while i < len(line):
+                    # Links
+                    link_match = re.search(r"\[([^\]]+)\]\(([^\)]+)\)", line[i:])
+                    note_link_match = re.search(r"\[\[([^\]]+)\]\]", line[i:])
+
+                    if link_match and (not note_link_match or link_match.start() < note_link_match.start()):
+                        # Text before the link
+                        self.text_area.insert(tk.END, line[i:i+link_match.start()])
+                        
+                        # The link itself
+                        title = link_match.group(1)
+                        url = link_match.group(2)
+                        self.text_area.insert(tk.END, title, ("link", f"link-{url}"))
+                        
+                        i += link_match.end()
+                        continue
+                    
+                    if note_link_match:
+                        # Text before the link
+                        self.text_area.insert(tk.END, line[i:i+note_link_match.start()])
+                        
+                        # The link itself
+                        title = note_link_match.group(1)
+                        self.text_area.insert(tk.END, title, ("note_link", f"note_link-{title}"))
+                        
+                        i += note_link_match.end()
+                        continue
+
                     if line[i:i+2] == "**":
                         end = line.find("**", i+2)
                         if end != -1:
