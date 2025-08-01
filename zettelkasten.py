@@ -10,10 +10,10 @@ class NoteApp:
     def __init__(self, root):
         self.edit_mode = True
         self.default_font_size = 18
-        self.default_font = font.Font(family="Helvetica", size=self.default_font_size)
+        self.default_font = font.Font(family="Courier New", size=self.default_font_size)
 
         self.root = root
-        self.root.title("Zettelkasten v1.5")
+        self.root.title("Zettelkasten v1.5.1")
         self.notes = {}
         self.current_note = None
         self.image_refs = []
@@ -170,7 +170,7 @@ class NoteApp:
         # Rename note if title changed
         if old_title and old_title in self.notes:
             self.notes.pop(old_title)
-            old_path = f"notes/{old_title}.md"
+            old_path = os.path.join(self.archive_dir, f"{old_title}.md")
             if os.path.exists(old_path):
                 os.remove(old_path)
 
@@ -207,7 +207,7 @@ class NoteApp:
         filepath = filedialog.askopenfilename(filetypes=[("Image Files", "*.png *.jpg *.gif")])
         if filepath:
             filename = os.path.basename(filepath)
-            new_path = os.path.join("notes/images", filename)
+            new_path = os.path.join(self.image_dir, filename)
             if not os.path.exists(new_path):
                 Image.open(filepath).save(new_path)
 
@@ -233,7 +233,7 @@ class NoteApp:
             img = ImageGrab.grabclipboard()
             if isinstance(img, Image.Image):
                 filename = f"{uuid.uuid4().hex[:8]}.png"
-                path = os.path.join("notes/images", filename)
+                path = os.path.join(self.image_dir, filename)
                 img.save(path)
                 self.text_area.insert(tk.INSERT, f"\n![{filename}]\n")
         except Exception as e:
@@ -245,7 +245,7 @@ class NoteApp:
             # First: convert current preview to markdown (reverse preview if needed — optional step)
             content = self.text_area.get(1.0, tk.END).strip()
             self.notes[title] = content
-            with open(f"notes/{title}.md", "w", encoding="utf-8") as f:
+            with open(os.path.join(self.archive_dir, f"{title}.md"), "w", encoding="utf-8") as f:
                 f.write(content)
             messagebox.showinfo("Saved", f"Note '{title}' saved.")
             self.insert_with_preview(content)  # re-render with formatting
@@ -277,7 +277,7 @@ class NoteApp:
                 self.note_listbox.itemconfig(i, bg="white")
                 continue
             title = self.note_listbox.get(i)
-            path = f"notes/{title}.md"
+            path = os.path.join(self.archive_dir, f"{title}.md")
             match = False
 
             if query in title.lower():
@@ -297,11 +297,18 @@ class NoteApp:
     def load_all_notes(self):
         titles = [file[:-3] for file in os.listdir(self.archive_dir) if file.endswith(".md")]
         for title in natsorted(titles):
-            self.notes[title] = ""
-            self.note_listbox.insert(tk.END, title)
+            print(title)
+            path = os.path.join(self.archive_dir, f"{title}.md")
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                self.notes[title] = content
+                self.note_listbox.insert(tk.END, title)
+
 
     def switch_archive(self):
         new_dir = filedialog.askdirectory(title="Choose archive folder")
+        print(new_dir)
         if new_dir:
             self.archive_dir = new_dir
             self.image_dir = os.path.join(self.archive_dir, "images")
@@ -312,6 +319,7 @@ class NoteApp:
             self.title_var.set("")
             self.text_area.config(state=tk.NORMAL)
             self.text_area.delete(1.0, tk.END)
+            print('Image dir now:', self.image_dir)
             self.load_all_notes()
 
     def load_note(self, event):
@@ -341,7 +349,8 @@ class NoteApp:
 
         for line in content.splitlines():
             stripped = line.strip()
-
+            #print('Checking for images')
+            #print(line, stripped)
             # Headings
             if stripped.startswith("### "):
                 self.text_area.insert(tk.END, stripped[4:] + "\n", "h3")
@@ -351,9 +360,11 @@ class NoteApp:
                 self.text_area.insert(tk.END, stripped[2:] + "\n", "h1")
 
             # Images
+
             elif stripped.startswith("![") and stripped.endswith("]"):
                 filename = stripped[2:-1]
-                path = os.path.join("notes/images", filename)
+                path = os.path.join(self.image_dir, filename)
+                print('Preview', path)
                 if os.path.exists(path):
                     try:
                         img = Image.open(path)
