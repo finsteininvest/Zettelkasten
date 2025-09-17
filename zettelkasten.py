@@ -14,7 +14,7 @@ class NoteApp:
         self.default_font = font.Font(family="Courier New", size=self.default_font_size)
 
         self.root = root
-        self.root.title("Zettelkasten v1.6")
+        self.root.title("Zettelkasten v1.9")
         self.notes = {}
         self.current_note = None
         self.image_refs = []
@@ -60,6 +60,9 @@ class NoteApp:
         self.title_entry.configure(font=self.default_font)
         self.text_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.text_area.bind("<Double-Button-1>", self.handle_image_double_click)
+        self.text_area.bind("<Configure>", self.on_resize)
+
+        self.resize_job = None
 
         self.root.bind('<Control-s>', self.save_note)
         self.root.bind('<Command-s>', self.save_note)
@@ -121,26 +124,38 @@ class NoteApp:
         menubar.add_cascade(label="File", menu=filemenu)
         self.root.config(menu=menubar)
 
-        for widget in [self.note_listbox, self.title_entry, self.text_area]:
+        for widget in [self.note_listbox, self.title_entry, self.text_area, self.search_entry]:
             widget.bind("<Control-Tab>", self.cycle_focus)
 
         self.load_all_notes()
 
-    def cycle_focus(self, event=None):
-        widgets = [self.note_listbox, self.title_entry, self.text_area]
-        current = self.root.focus_get()
-
+    def cycle_focus(self, event):
+        widgets = [self.note_listbox, self.title_entry, self.text_area, self.search_entry]
+        
         try:
-            idx = widgets.index(current)
-            next_widget = widgets[(idx + 1) % len(widgets)]
+            idx = widgets.index(event.widget)
         except ValueError:
-            next_widget = self.note_listbox
+            return "break"
 
-        print(next_widget)
-        next_widget.focus_set()
-        return "break"  # verhindert z.B. Einrückung im Text
+        # Loop to find the next enabled widget
+        for i in range(1, len(widgets) + 1):
+            next_idx = (idx + i) % len(widgets)
+            next_widget = widgets[next_idx]
+            if str(next_widget.cget('state')) != 'disabled':
+                next_widget.focus_set()
+                break
+        
+        return "break"
 
+    def on_resize(self, event):
+        if self.resize_job:
+            self.root.after_cancel(self.resize_job)
+        self.resize_job = self.root.after(500, self.rerender_note)
 
+    def rerender_note(self):
+        if not self.edit_mode and self.current_note:
+            content = self.notes.get(self.current_note, "")
+            self.insert_with_preview(content)
 
     def new_note(self, event=None):
         title = simpledialog.askstring("New Note", "Enter note title:")
@@ -268,13 +283,11 @@ class NoteApp:
     def save_note(self, event=None):
         title = self.title_var.get().strip()
         if title:
-            # First: convert current preview to markdown (reverse preview if needed — optional step)
             content = self.text_area.get(1.0, tk.END).strip()
+            print(content)
             self.notes[title] = content
             with open(os.path.join(self.archive_dir, f"{title}.md"), "w", encoding="utf-8") as f:
                 f.write(content)
-            messagebox.showinfo("Saved", f"Note '{title}' saved.")
-            self.insert_with_preview(content)  # re-render with formatting
 
     def toggle_edit_mode(self):
         self.edit_mode = not self.edit_mode
@@ -282,15 +295,17 @@ class NoteApp:
         if self.edit_mode:
             # Switch to EDIT mode
             self.text_area.config(state=tk.NORMAL)
-            raw_text = self.text_area.get(1.0, tk.END)
             self.text_area.delete(1.0, tk.END)
-            self.text_area.insert(tk.END, self.notes.get(self.current_note, raw_text))
+            self.text_area.insert(tk.END, self.notes.get(self.current_note, ''))
             self.toggle_button.config(text="Switch to Preview")
         else:
             # Switch to PREVIEW mode
+            if self.current_note:
+                self.save_note()
+            
             self.text_area.config(state=tk.NORMAL)
-            raw_text = self.text_area.get(1.0, tk.END)
-            self.insert_with_preview(raw_text)
+            content = self.notes.get(self.current_note, '')
+            self.insert_with_preview(content)
             self.text_area.config(state=tk.DISABLED)
             self.toggle_button.config(text="Switch to Edit")
 
@@ -351,14 +366,20 @@ class NoteApp:
     def load_note(self, event):
         selection = self.note_listbox.curselection()
         if selection:
-            title = self.note_listbox.get(selection[0])
-            self.current_note = title
-            self.title_var.set(title)
-            path = os.path.join(self.archive_dir, f"{title}.md")
+            new_title = self.note_listbox.get(selection[0])
+
+            # If a different note is selected, save the current one first.
+            if self.current_note and self.current_note != new_title:
+                self.save_note()
+
+            # Now, load the new note.
+            self.current_note = new_title
+            self.title_var.set(new_title)
+            path = os.path.join(self.archive_dir, f"{new_title}.md")
             if os.path.exists(path):
                 with open(path, "r", encoding="utf-8") as f:
                     content = f.read()
-                self.notes[title] = content
+                self.notes[new_title] = content
                 if self.edit_mode:
                     self.text_area.config(state=tk.NORMAL)
                     self.text_area.delete(1.0, tk.END)
@@ -388,14 +409,18 @@ class NoteApp:
                 webbrowser.open_new(tag[5:])
 
     def insert_with_preview(self, content):
+        # Temporarily enable to modify
+        self.text_area.config(state=tk.NORMAL)
         self.text_area.delete(1.0, tk.END)
         self.image_refs.clear()
         self.image_positions = {}
 
+        # Get current width of the text area for scaling
+        max_width = self.text_area.winfo_width() - 10  # 10px padding
+
         for line in content.splitlines():
             stripped = line.strip()
-            #print('Checking for images')
-            #print(line, stripped)
+            
             # Headings
             if stripped.startswith("### "):
                 self.text_area.insert(tk.END, stripped[4:] + "\n", "h3")
@@ -405,29 +430,31 @@ class NoteApp:
                 self.text_area.insert(tk.END, stripped[2:] + "\n", "h1")
 
             # Images
+            elif stripped.startswith("![") and stripped.endswith("]"):
+                match = re.match(r"!\[(.*?)](.*)", stripped)
+                if not match:
+                    continue
+                filename = match.group(1).strip()
 
-            elif stripped.startswith("![ ") and stripped.endswith("]"):
-                filename = stripped[2:-1]
                 path = os.path.join(self.image_dir, filename)
-                print('Preview', path)
                 if os.path.exists(path):
                     try:
                         img = Image.open(path)
-                        img.thumbnail((300, 300))
+                        
+                        # Scale image to fit text area width
+                        if img.width > max_width and max_width > 0:
+                            scale = max_width / img.width
+                            new_height = int(img.height * scale)
+                            img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+
                         tk_img = ImageTk.PhotoImage(img)
-
-
-                        # Insert hidden markdown text
+                        
                         self.text_area.insert(tk.END, f"![{filename}]\n", ("hidden",))
-
-                        # Insert image preview
                         self.text_area.image_create(tk.END, image=tk_img)
-
-                        # Capture the line number *after* image is placed
+                        
                         image_line = self.text_area.index(tk.INSERT).split(".")[0]
                         self.text_area.insert(tk.END, "\n")
-
-                        # Track references
+                        
                         self.image_refs.append(tk_img)
                         self.image_positions[image_line] = path
 
@@ -445,49 +472,39 @@ class NoteApp:
                     note_link_match = re.search(r"\[\[([^\]]+)\]\]", line[i:])
 
                     if link_match and (not note_link_match or link_match.start() < note_link_match.start()):
-                        # Text before the link
                         self.text_area.insert(tk.END, line[i:i+link_match.start()])
-                        
-                        # The link itself
-                        title = link_match.group(1)
-                        url = link_match.group(2)
+                        title, url = link_match.group(1), link_match.group(2)
                         self.text_area.insert(tk.END, title, ("link", f"link-{url}"))
-                        
                         i += link_match.end()
                         continue
                     
                     if note_link_match:
-                        # Text before the link
                         self.text_area.insert(tk.END, line[i:i+note_link_match.start()])
-                        
-                        # The link itself
                         title = note_link_match.group(1)
                         self.text_area.insert(tk.END, title, ("note_link", f"note_link-{title}"))
-                        
                         i += note_link_match.end()
                         continue
 
-                    if line[i:i+2] == "**":
-                        end = line.find("**", i+2)
-                        if end != -1:
-                            self.text_area.insert(tk.END, line[i+2:end], "bold")
-                            i = end + 2
-                            continue
-                    elif line[i] == "*" and (i == 0 or line[i-1] != "*"):
-                        end = line.find("*", i+1)
-                        if end != -1 and (line[end-1] != "*"):
-                            self.text_area.insert(tk.END, line[i+1:end], "italic")
-                            i = end + 1
-                            continue
-                    elif line[i] == "_":
-                        end = line.find("_", i+1)
-                        if end != -1:
-                            self.text_area.insert(tk.END, line[i+1:end], "underline")
-                            i = end + 1
-                            continue
+                    # Styling
+                    processed = False
+                    for prefix, tag in [("**", "bold"), ("*", "italic"), ("_", "underline")]:
+                        if line[i:].startswith(prefix):
+                            end = line.find(prefix, i + len(prefix))
+                            if end != -1:
+                                self.text_area.insert(tk.END, line[i+len(prefix):end], tag)
+                                i = end + len(prefix)
+                                processed = True
+                                break
+                    if processed:
+                        continue
+
                     self.text_area.insert(tk.END, line[i])
                     i += 1
                 self.text_area.insert(tk.END, "\n")
+        
+        # If in preview mode, disable editing again
+        if not self.edit_mode:
+            self.text_area.config(state=tk.DISABLED)
 
 
 if __name__ == "__main__":
