@@ -1,4 +1,4 @@
-import os
+import os, sys
 import re
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, font, PhotoImage
@@ -14,7 +14,7 @@ class NoteApp:
         self.default_font = font.Font(family="Courier New", size=self.default_font_size)
 
         self.root = root
-        self.root.title("Zettelkasten v1.9")
+        self.root.title("Zettelkasten v1.9.2")
         self.notes = {}
         self.current_note = None
         self.image_refs = []
@@ -206,7 +206,11 @@ class NoteApp:
         if new_title == old_title:
             return  # No change
 
-        content = self.text_area.get(1.0, tk.END).strip()
+        content = (
+            self.text_area.get(1.0, tk.END).strip()
+            if self.edit_mode
+            else self.notes.get(old_title, "").strip()
+        )
 
         # Rename note if title changed
         if old_title and old_title in self.notes:
@@ -283,11 +287,16 @@ class NoteApp:
     def save_note(self, event=None):
         title = self.title_var.get().strip()
         if title:
-            content = self.text_area.get(1.0, tk.END).strip()
-            print(content)
-            self.notes[title] = content
+            if self.edit_mode:
+                content = self.text_area.get(1.0, tk.END).strip()
+                self.notes[title] = content
+            else:
+                # In preview mode, keep the original markdown
+                content = self.notes.get(title, "").strip()
+
             with open(os.path.join(self.archive_dir, f"{title}.md"), "w", encoding="utf-8") as f:
                 f.write(content)
+
 
     def toggle_edit_mode(self):
         self.edit_mode = not self.edit_mode
@@ -338,7 +347,7 @@ class NoteApp:
     def load_all_notes(self):
         titles = [file[:-3] for file in os.listdir(self.archive_dir) if file.endswith(".md")]
         for title in natsorted(titles):
-            print(title)
+            #print(title)
             path = os.path.join(self.archive_dir, f"{title}.md")
             if os.path.exists(path):
                 with open(path, "r", encoding="utf-8") as f:
@@ -509,5 +518,6 @@ class NoteApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
+    root.iconphoto(False, tk.PhotoImage(file="icon.png"))
     app = NoteApp(root)
     root.mainloop()
